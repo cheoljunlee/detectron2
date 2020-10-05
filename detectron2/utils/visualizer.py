@@ -303,6 +303,8 @@ class VisImage:
 
         img_rgba = buffer.reshape(height, width, 4)
         rgb, alpha = np.split(img_rgba, [3], axis=2)
+        blurred_img = cv2.GaussianBlur(self.img, (int(width/16)*2+1, int(height/16)*2+1), 0)
+        rgb = np.where(rgb == np.array([255, 255, 255]), self.img, blurred_img)
         return rgb.astype("uint8")
 
 
@@ -636,12 +638,14 @@ class Visualizer:
 
         for i in range(num_instances):
             color = assigned_colors[i]
+            boxes = None
+            labels = None
             if boxes is not None:
                 self.draw_box(boxes[i], edge_color=color)
 
             if masks is not None:
                 for segment in masks[i].polygons:
-                    self.draw_polygon(segment.reshape(-1, 2), color, alpha=alpha)
+                    self.draw_polygon(segment.reshape(-1, 2), [1,1,1], alpha=1)
 
             if labels is not None:
                 # first get a box

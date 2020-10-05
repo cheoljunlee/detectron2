@@ -79,7 +79,7 @@ if __name__ == "__main__":
 
     cfg = setup_cfg(args)
 
-    demo = VisualizationDemo(cfg)
+    demo = VisualizationDemo(cfg, parallel=True)
 
     if args.input:
         if len(args.input) == 1:
@@ -143,7 +143,7 @@ if __name__ == "__main__":
                 filename=output_fname,
                 # some installation of opencv may not support x264 (due to its license),
                 # you can try other format (e.g. MPEG)
-                fourcc=cv2.VideoWriter_fourcc(*"x264"),
+                fourcc=cv2.VideoWriter_fourcc(*"avc1"),
                 fps=float(frames_per_second),
                 frameSize=(width, height),
                 isColor=True,

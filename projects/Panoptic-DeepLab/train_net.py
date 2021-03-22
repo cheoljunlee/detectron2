@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+# Copyright (c) Facebook, Inc. and its affiliates.
 
 """
 Panoptic-DeepLab Training Script.
@@ -7,7 +7,6 @@ This script is a simplified version of the training script in detectron2/tools.
 """
 
 import os
-from typing import Any, Dict, List, Set
 import torch
 
 import detectron2.data.transforms as T
@@ -28,6 +27,7 @@ from detectron2.projects.panoptic_deeplab import (
     PanopticDeeplabDatasetMapper,
     add_panoptic_deeplab_config,
 )
+from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
 
 
@@ -59,6 +59,8 @@ class Trainer(DefaultTrainer):
         For your own dataset, you can simply create an evaluator manually in your
         script and do not have to worry about the hacky if-else logic here.
         """
+        if cfg.MODEL.PANOPTIC_DEEPLAB.BENCHMARK_NETWORK_SPEED:
+            return None
         if output_folder is None:
             output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
         evaluator_list = []
@@ -72,12 +74,17 @@ class Trainer(DefaultTrainer):
             evaluator_list.append(CityscapesSemSegEvaluator(dataset_name))
             evaluator_list.append(CityscapesInstanceEvaluator(dataset_name))
         if evaluator_type == "coco_panoptic_seg":
-            # Evaluate bbox and segm.
-            cfg.defrost()
-            cfg.MODEL.MASK_ON = True
-            cfg.MODEL.KEYPOINT_ON = False
-            cfg.freeze()
-            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+            # `thing_classes` in COCO panoptic metadata includes both thing and
+            # stuff classes for visualization. COCOEvaluator requires metadata
+            # which only contains thing classes, thus we map the name of
+            # panoptic datasets to their corresponding instance datasets.
+            dataset_name_mapper = {
+                "coco_2017_val_panoptic": "coco_2017_val",
+                "coco_2017_val_100_panoptic": "coco_2017_val_100",
+            }
+            evaluator_list.append(
+                COCOEvaluator(dataset_name_mapper[dataset_name], output_dir=output_folder)
+            )
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(
@@ -106,52 +113,24 @@ class Trainer(DefaultTrainer):
         """
         Build an optimizer from config.
         """
-        norm_module_types = (
-            torch.nn.BatchNorm1d,
-            torch.nn.BatchNorm2d,
-            torch.nn.BatchNorm3d,
-            torch.nn.SyncBatchNorm,
-            # NaiveSyncBatchNorm inherits from BatchNorm2d
-            torch.nn.GroupNorm,
-            torch.nn.InstanceNorm1d,
-            torch.nn.InstanceNorm2d,
-            torch.nn.InstanceNorm3d,
-            torch.nn.LayerNorm,
-            torch.nn.LocalResponseNorm,
+        params = get_default_optimizer_params(
+            model,
+            weight_decay=cfg.SOLVER.WEIGHT_DECAY,
+            weight_decay_norm=cfg.SOLVER.WEIGHT_DECAY_NORM,
         )
-        params: List[Dict[str, Any]] = []
-        memo: Set[torch.nn.parameter.Parameter] = set()
-        for module in model.modules():
-            for key, value in module.named_parameters(recurse=False):
-                if not value.requires_grad:
-                    continue
-                # Avoid duplicating parameters
-                if value in memo:
-                    continue
-                memo.add(value)
-                lr = cfg.SOLVER.BASE_LR
-                weight_decay = cfg.SOLVER.WEIGHT_DECAY
-                if isinstance(module, norm_module_types):
-                    weight_decay = cfg.SOLVER.WEIGHT_DECAY_NORM
-                elif key == "bias":
-                    lr = cfg.SOLVER.BASE_LR * cfg.SOLVER.BIAS_LR_FACTOR
-                    weight_decay = cfg.SOLVER.WEIGHT_DECAY_BIAS
-                params += [{"params": [value], "lr": lr, "weight_decay": weight_decay}]
 
         optimizer_type = cfg.SOLVER.OPTIMIZER
         if optimizer_type == "SGD":
-            optimizer = torch.optim.SGD(
+            return maybe_add_gradient_clipping(cfg, torch.optim.SGD)(
                 params,
                 cfg.SOLVER.BASE_LR,
                 momentum=cfg.SOLVER.MOMENTUM,
                 nesterov=cfg.SOLVER.NESTEROV,
             )
         elif optimizer_type == "ADAM":
-            optimizer = torch.optim.Adam(params, cfg.SOLVER.BASE_LR)
+            return maybe_add_gradient_clipping(cfg, torch.optim.Adam)(params, cfg.SOLVER.BASE_LR)
         else:
             raise NotImplementedError(f"no optimizer type {optimizer_type}")
-        optimizer = maybe_add_gradient_clipping(cfg, optimizer)
-        return optimizer
 
 
 def setup(args):
